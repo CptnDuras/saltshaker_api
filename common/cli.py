@@ -26,7 +26,12 @@ def initialize(username, password):
         "audit_log",
         "event",
         "cmd_history",
-        "host"
+        "host",
+        "grains",
+        "period_task",
+        "period_result",
+        "period_audit",
+        "sls"
     ]
     for t in tables:
         status, result = db.create_table(t)
@@ -77,10 +82,10 @@ def initialize(username, password):
                 if insert_status is not True:
                     click.echo("Init role error: %s" % insert_result)
                     return
+                if i == role_dict["superuser"]:
+                    role_id = role[i]["id"]
                 click.echo("Init %s role successful" % role[i]["name"])
             else:
-                if i == role_dict["superuser"]:
-                    role_id = eval(result[0][0])["id"]
                 click.echo("%s role already exists" % role[i]["name"])
         else:
             click.echo("Init role error: %s" % result)

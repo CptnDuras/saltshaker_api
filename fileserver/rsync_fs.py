@@ -2,10 +2,10 @@
 import configparser
 import os
 import socket
-from common.log import Logger
+from common.log import loggers
 from common.db import DB
 
-logger = Logger()
+logger = loggers()
 
 config = configparser.ConfigParser()
 conf_path = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
@@ -33,13 +33,10 @@ port = %s
     db = DB()
     status, result = db.select("product", "")
     db.close_mysql()
-    product_list = []
-    if status is True and result:
-        for i in result:
-            try:
-                product_list.append(eval(i[0]))
-            except Exception as e:
-                logger.error("Create rsync config error: %s" % e)
+    if status is True:
+        product_list = result
+    else:
+        return {"status": False, "message": result}, 500
     if os.path.exists(file_name):
         os.remove(file_name)
     with open(file_name, "x") as file:

@@ -2,9 +2,10 @@
 import pymysql
 import configparser
 import os
-from common.log import Logger
+from common.log import loggers
+import ast
 
-logger = Logger()
+logger = loggers()
 
 config = configparser.ConfigParser()
 conf_path = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
@@ -15,6 +16,7 @@ mysql_user = config.get("Mysql", "MYSQL_USER")
 mysql_password = config.get("Mysql", "MYSQL_PASSWORD")
 mysql_db = config.get("Mysql", "MYSQL_DB")
 mysql_charset = config.get("Mysql", "MYSQL_CHARSET")
+url = "mysql+pymysql://%s:%s@%s:%s/%s" % (mysql_user, mysql_password, mysql_host, mysql_port, mysql_db)
 
 
 class DB(object):
@@ -49,8 +51,13 @@ class DB(object):
         logger.info(sql)
         try:
             self.cursor.execute(sql)
-            result = self.cursor.fetchall()
-            return True, result
+            tmp = self.cursor.fetchall()
+            if tmp:
+                result = ast.literal_eval(tmp[0][0].replace('true', 'True').replace('false', 'False').
+                                          replace('null', '""'))
+                return True, result
+            else:
+                return False, "%s does not exist" % id
         except Exception as e:
             logger.error("Select by id error: %s" % e)
             return False, str(e)
@@ -58,9 +65,13 @@ class DB(object):
     def select(self, table, arg):
         sql = "SELECT * FROM %s %s" % (table, arg)
         logger.info(sql)
+        result = []
         try:
             self.cursor.execute(sql)
-            result = self.cursor.fetchall()
+            tmp = self.cursor.fetchall()
+            for i in tmp:
+                result.append(ast.literal_eval(i[0].replace('true', 'True').replace('false', 'False').
+                              replace('null', '""')))
             return True, result
         except Exception as e:
             logger.error("Select by id error: %s" % e)
@@ -79,20 +90,34 @@ class DB(object):
             return False, str(e)
 
     def update_by_id(self, table, data, id):
-        sql = "UPDATE %s SET data='%s' WHERE data -> '$.id'='%s'" % (table, data.replace("'", r"\'"), id)
+        sql = "UPDATE %s SET data='%s' WHERE data -> '$.id'='%s'" % (table, data.replace("'", r"\'").
+                                                                     replace(r"\n", r'\\n').replace(r'\"', r''), id)
         logger.info(sql)
         try:
             self.cursor.execute(sql)
             self.conn.commit()
             return True, self.cursor.rowcount
         except Exception as e:
-            logger.error("Insert error: %s" % e)
+            logger.error("Update error: %s" % e)
+            self.conn.rollback()
+            return False, str(e)
+
+    def update_by_id_kv(self, table, k, v, id):
+        sql = "UPDATE %s SET data=JSON_SET(data, '%s', '%s') WHERE data -> '$.id'='%s'" % (table, k, v, id)
+        logger.info(sql)
+        try:
+            self.cursor.execute(sql)
+            self.conn.commit()
+            return True, self.cursor.rowcount
+        except Exception as e:
+            logger.error("Update error: %s" % e)
             self.conn.rollback()
             return False, str(e)
 
     def insert(self, table, data):
         # 转义'
-        sql = "INSERT INTO %s(data) VALUES('%s') " % (table, data.replace("'", r"\'").replace(r"\n", r'\\n'))
+        sql = "INSERT INTO %s(data) VALUES('%s') " % (table, data.replace("'", r"\'").replace(r"\n", r'\\n').
+                                                      replace(r'\"', r''))
         logger.info(sql)
         try:
             self.cursor.execute(sql)
@@ -125,12 +150,60 @@ class DB(object):
         sql = " or ".join(sql_list)
         sql = "SELECT * FROM %s WHERE %s" % (table, sql)
         logger.info(sql)
+        result = []
         try:
             self.cursor.execute(sql)
-            result = self.cursor.fetchall()
+            tmp = self.cursor.fetchall()
+            for i in tmp:
+                result.append(ast.literal_eval(i[0].replace('true', 'True').replace('false', 'False').
+                              replace('null', '""')))
             return True, result
         except Exception as e:
             logger.error("Select by list error: %s" % e)
+            return False, str(e)
+
+    # 查询字段和查询的数据都是list
+    def select_by_list_list(self, table, field, array):
+        sql_list = []
+        for i in array:
+            sql_list.append("data -> '$.%s' like '%s'" % (field, "%" + i + "%"))
+        sql = " or ".join(sql_list)
+        sql = "SELECT * FROM %s WHERE %s" % (table, sql)
+        logger.info(sql)
+        result = []
+        try:
+            self.cursor.execute(sql)
+            tmp = self.cursor.fetchall()
+            for i in tmp:
+                result.append(ast.literal_eval(i[0].replace('true', 'True').replace('false', 'False').
+                              replace('null', '""')))
+            return True, result
+        except Exception as e:
+            logger.error("Select by list error: %s" % e)
+            return False, str(e)
+
+    # 查询表数据条数通过id
+    def select_count_by_id(self, table, id):
+        sql = "SELECT count(*) FROM %s WHERE data -> '$.id'='%s'" % (table, id)
+        logger.info(sql)
+        try:
+            self.cursor.execute(sql)
+            self.conn.commit()
+            return True, self.cursor.fetchall()[0][0]
+        except Exception as e:
+            logger.error("Select count error: %s" % e)
+            return False, str(e)
+
+    # 查询表数据条数
+    def select_count(self, table, field, id):
+        sql = "SELECT count(*) FROM %s WHERE data -> '$.%s'='%s'" % (table, field, id)
+        logger.info(sql)
+        try:
+            self.cursor.execute(sql)
+            self.conn.commit()
+            return True, self.cursor.fetchall()[0][0]
+        except Exception as e:
+            logger.error("Select count error: %s" % e)
             return False, str(e)
 
     def close_mysql(self):

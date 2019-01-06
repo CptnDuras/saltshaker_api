@@ -16,9 +16,12 @@ for event_info in event.iter_events(full=True):
             if ret['fun'] == "saltutil.find_job":
                 continue
             db = DB()
-            print(ret)
             db.insert("salt_return", json.dumps(ret, ensure_ascii=False))
             db.close_mysql()
     # Other Event
     else:
         pass
+
+
+
+

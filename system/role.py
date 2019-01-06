@@ -1,41 +1,38 @@
 # -*- coding:utf-8 -*-
 from flask_restful import Resource, reqparse
 from flask import g
-from common.log import Logger
+from common.log import loggers
 from common.audit_log import audit_log
 from common.db import DB
 from common.utility import uuid_prefix
 from common.sso import access_required
 import json
-from user.user import update_user_privilege
+from system.user import update_user_privilege
 from common.const import role_dict
 
-logger = Logger()
+logger = loggers()
 
 parser = reqparse.RequestParser()
 parser.add_argument("name", type=str, required=True, trim=True)
 parser.add_argument("description", type=str, required=True, trim=True)
+parser.add_argument("tag", type=int, required=True, trim=True)
 
 
 class Role(Resource):
-    @access_required(role_dict["superuser"])
+    @access_required(role_dict["product"])
     def get(self, role_id):
         db = DB()
         status, result = db.select_by_id("role", role_id)
         db.close_mysql()
         if status is True:
             if result:
-                try:
-                    role = eval(result[0][0])
-                except Exception as e:
-                    return {"status": False, "message": str(e)}, 500
+                return {"data": result, "status": True, "message": ""}, 200
             else:
                 return {"status": False, "message": "%s does not exist" % role_id}, 404
         else:
             return {"status": False, "message": result}, 500
-        return {"role": role, "status": True, "message": ""}, 200
 
-    @access_required(role_dict["superuser"])
+    @access_required(role_dict["product"])
     def delete(self, role_id):
         user = g.user_info["username"]
         db = DB()
@@ -52,7 +49,7 @@ class Role(Resource):
             return {"status": False, "message": info["message"]}, 500
         return {"status": True, "message": ""}, 200
 
-    @access_required(role_dict["superuser"])
+    @access_required(role_dict["product"])
     def put(self, role_id):
         user = g.user_info["username"]
         args = parser.parse_args()
@@ -71,9 +68,8 @@ class Role(Resource):
         # 判断名字是否重复
         status, result = db.select("role", "where data -> '$.name'='%s'" % args["name"])
         if status is True:
-            if len(result) != 0:
-                info = eval(result[0][0])
-                if role_id != info.get("id"):
+            if result:
+                if role_id != result[0].get("id"):
                     db.close_mysql()
                     return {"status": False, "message": "The role name already exists"}, 200
         status, result = db.update_by_id("role", json.dumps(role, ensure_ascii=False), role_id)
@@ -86,26 +82,17 @@ class Role(Resource):
 
 
 class RoleList(Resource):
-    @access_required(role_dict["superuser"])
+    @access_required(role_dict["product"])
     def get(self):
         db = DB()
         status, result = db.select("role", "")
         db.close_mysql()
-        role_list = []
         if status is True:
-            if result:
-                for i in result:
-                    try:
-                        role_list.append(eval(i[0]))
-                    except Exception as e:
-                        return {"status": False, "message": str(e)}, 500
-            else:
-                return {"status": False, "message": "Role does not exist"}, 404
+            return {"data": result, "status": True, "message": ""}, 200
         else:
             return {"status": False, "message": result}, 500
-        return {"roles": {"role": role_list}, "status": True, "message": ""}, 200
 
-    @access_required(role_dict["superuser"])
+    @access_required(role_dict["product"])
     def post(self):
         args = parser.parse_args()
         args["id"] = uuid_prefix("r")

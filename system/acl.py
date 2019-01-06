@@ -1,19 +1,20 @@
 # -*- coding:utf-8 -*-
-from flask_restful import Resource, reqparse
+from flask_restful import Resource, reqparse, request
 from flask import g
-from common.log import Logger
+from common.log import loggers
 from common.audit_log import audit_log
 from common.db import DB
 from common.utility import uuid_prefix
 from common.sso import access_required
 import json
-from user.user import update_user_privilege
+from system.user import update_user_privilege
 from common.const import role_dict
 
 
-logger = Logger()
+logger = loggers()
 
 parser = reqparse.RequestParser()
+parser.add_argument("product_id", type=str, required=True, trim=True)
 parser.add_argument("name", type=str, required=True, trim=True)
 parser.add_argument("allow", type=str, default=[], action="append")
 parser.add_argument("deny", type=str, default=[], action="append")
@@ -21,24 +22,20 @@ parser.add_argument("description", type=str, default="", trim=True)
 
 
 class ACL(Resource):
-    @access_required(role_dict["acl"])
+    @access_required(role_dict["product"])
     def get(self, acl_id):
         db = DB()
         status, result = db.select_by_id("acl", acl_id)
         db.close_mysql()
         if status is True:
             if result:
-                try:
-                    acl = eval(result[0][0])
-                except Exception as e:
-                    return {"status": False, "message": str(e)}, 500
+                return {"data": result, "status": True, "message": ""}, 200
             else:
                 return {"status": False, "message": "%s does not exist" % acl_id}, 404
         else:
             return {"status": False, "message": result}, 500
-        return {"acl": acl, "status": True, "message": ""}, 200
 
-    @access_required(role_dict["acl"])
+    @access_required(role_dict["product"])
     def delete(self, acl_id):
         user = g.user_info["username"]
         db = DB()
@@ -55,7 +52,7 @@ class ACL(Resource):
             return {"status": False, "message": info["message"]}, 500
         return {"status": True, "message": ""}, 200
 
-    @access_required(role_dict["acl"])
+    @access_required(role_dict["product"])
     def put(self, acl_id):
         user = g.user_info["username"]
         args = parser.parse_args()
@@ -72,13 +69,12 @@ class ACL(Resource):
             db.close_mysql()
             return {"status": False, "message": "%s does not exist" % acl_id}, 404
         # 判断名字否已经存在
-        status, result = db.select("acl", "where data -> '$.name'='%s'" % args["name"])
-        if status is True:
-            if len(result) != 0:
-                info = eval(result[0][0])
-                if acl_id != info.get("id"):
-                    db.close_mysql()
-                    return {"status": False, "message": "The acl name already exists"}, 200
+        status, result = db.select("acl", "where data -> '$.name'='%s' and data -> '$.product_id'='%s'"
+                                   % (args["name"], args["product_id"]))
+        if status is True and result:
+            if acl_id != result[0].get("id"):
+                db.close_mysql()
+                return {"status": False, "message": "The acl name already exists"}, 200
         status, result = db.update_by_id("acl", json.dumps(acl, ensure_ascii=False), acl_id)
         db.close_mysql()
         if status is not True:
@@ -89,33 +85,26 @@ class ACL(Resource):
 
 
 class ACLList(Resource):
-    @access_required(role_dict["acl"])
+    @access_required(role_dict["product"])
     def get(self):
+        product_id = request.args.get("product_id")
         db = DB()
-        status, result = db.select("acl", "")
+        status, result = db.select("acl", "where data -> '$.product_id'='%s'" % product_id)
         db.close_mysql()
-        acl_list = []
         if status is True:
-            if result:
-                for i in result:
-                    try:
-                        acl_list.append(eval(i[0]))
-                    except Exception as e:
-                        return {"status": False, "message": str(e)}, 500
-            else:
-                return {"status": False, "message": "Acl does not exist"}, 404
+            return {"data": result, "status": True, "message": ""}, 200
         else:
             return {"status": False, "message": result}, 500
-        return {"acls": {"acl": acl_list}, "status": True, "message": ""}, 200
 
-    @access_required(role_dict["acl"])
+    @access_required(role_dict["product"])
     def post(self):
         args = parser.parse_args()
         args["id"] = uuid_prefix("a")
         user = g.user_info["username"]
         acl = args
         db = DB()
-        status, result = db.select("acl", "where data -> '$.name'='%s'" % args["name"])
+        status, result = db.select("acl", "where data -> '$.name'='%s' and data -> '$.product_id'='%s'"
+                                   % (args["name"], args["product_id"]))
         if status is True:
             if len(result) == 0:
                 insert_status, insert_result = db.insert("acl", json.dumps(acl, ensure_ascii=False))

@@ -1,17 +1,17 @@
 # -*- coding:utf-8 -*-
 from flask_restful import Resource, reqparse
 from flask import g
-from common.log import Logger
+from common.log import loggers
 from common.audit_log import audit_log
 from common.db import DB
 from common.utility import uuid_prefix
 from common.sso import access_required
 import json
-from user.user import update_user_privilege
+from system.user import update_user_privilege, update_user_product
 from common.const import role_dict
 from fileserver.rsync_fs import rsync_config
 
-logger = Logger()
+logger = loggers()
 
 parser = reqparse.RequestParser()
 parser.add_argument("name", type=str, required=True, trim=True)
@@ -31,26 +31,23 @@ parser.add_argument("password", type=str, default="", trim=True)
 parser.add_argument("http_username", type=str, default="", trim=True)
 parser.add_argument("http_password", type=str, default="", trim=True)
 parser.add_argument("api_version", type=str, default="", trim=True)
-parser.add_argument("project", type=str, default="", trim=True)
+parser.add_argument("state_project", type=str, default="", trim=True)
+parser.add_argument("pillar_project", type=str, default="", trim=True)
 
 
 class Product(Resource):
-    @access_required(role_dict["product"])
+    @access_required(role_dict["common_user"])
     def get(self, product_id):
         db = DB()
         status, result = db.select_by_id("product", product_id)
         db.close_mysql()
         if status is True:
             if result:
-                try:
-                    product = eval(result[0][0])
-                except Exception as e:
-                    return {"status": False, "message": str(e)}, 500
+                return {"data": result, "status": True, "message": ""}, 200
             else:
                 return {"status": False, "message": "%s does not exist" % product_id}, 404
         else:
             return {"status": False, "message": result}, 500
-        return {"product": product, "status": True, "message": ""}, 200
 
     @access_required(role_dict["product"])
     def delete(self, product_id):
@@ -90,9 +87,8 @@ class Product(Resource):
         # 判断名字是否重复
         status, result = db.select("product", "where data -> '$.name'='%s'" % args["name"])
         if status is True:
-            if len(result) != 0:
-                info = eval(result[0][0])
-                if product_id != info.get("id"):
+            if result:
+                if product_id != result[0].get("id"):
                     db.close_mysql()
                     return {"status": False, "message": "The product name already exists"}, 200
         status, result = db.update_by_id("product", json.dumps(product, ensure_ascii=False), product_id)
@@ -102,40 +98,68 @@ class Product(Resource):
             return {"status": False, "message": result}, 500
         audit_log(user, args["id"], product_id, "product", "edit")
         # 更新Rsync配置
-        rsync_config()
+        if args["file_server"] == "rsync":
+            rsync_config()
         return {"status": True, "message": ""}, 200
 
 
 class ProductList(Resource):
-    @access_required(role_dict["product"])
+    @access_required(role_dict["common_user"])
     def get(self):
         db = DB()
-        status, result = db.select("product", "")
-        db.close_mysql()
+        user_info = g.user_info
+        role_sql = []
+        if user_info["role"]:
+            for role in user_info["role"]:
+                role_sql.append("data -> '$.id'='%s'" % role)
+            sql = " or ".join(role_sql)
+            role_status, role_result = db.select("role", "where %s" % sql)
+            if role_status and role_result:
+                for role in role_result:
+                    if role["tag"] == 0:
+                        status, result = db.select("product", "")
+                        db.close_mysql()
+                        product_list = []
+                        if status is True:
+                            if result:
+                                product_list = result
+                        else:
+                            return {"status": False, "message": result}, 500
+                        return {"data": product_list, "status": True, "message": ""}, 200
+
+        sql_list = []
         product_list = []
-        if status is True:
-            if result:
-                for i in result:
-                    try:
-                        product_list.append(eval(i[0]))
-                    except Exception as e:
-                        return {"status": False, "message": str(e)}, 500
+        if user_info["product"]:
+            for product in user_info["product"]:
+                sql_list.append("data -> '$.id'='%s'" % product)
+            sql = " or ".join(sql_list)
+            status, result = db.select("product", "where %s" % sql)
+            db.close_mysql()
+            if status is True:
+                if result:
+                    product_list = result
+                    return {"data": product_list, "status": True, "message": ""}, 200
+                else:
+                    return {"status": False, "message": "Group does not exist"}, 404
             else:
-                return {"status": False, "message": "Product does not exist"}, 404
-        else:
-            return {"status": False, "message": result}, 500
-        return {"products": {"product": product_list}, "status": True, "message": ""}, 200
+                return {"status": False, "message": result}, 500
+        return {"data": product_list, "status": True, "message": ""}, 200
 
     @access_required(role_dict["product"])
     def post(self):
         args = parser.parse_args()
         args["id"] = uuid_prefix("p")
         user = g.user_info["username"]
+        user_id = g.user_info["id"]
         product = args
         db = DB()
         status, result = db.select("product", "where data -> '$.name'='%s'" % args["name"])
         if status is True:
             if len(result) == 0:
+                # 给用户添加产品线
+                info = update_user_product(user_id, args["id"])
+                if info["status"] is False:
+                    return {"status": False, "message": info["message"]}, 500
                 insert_status, insert_result = db.insert("product", json.dumps(product, ensure_ascii=False))
                 db.close_mysql()
                 if insert_status is not True:
